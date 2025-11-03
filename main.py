@@ -1,14 +1,6 @@
 import tkinter as tk
 import random
-import math
 import numpy as np
-
-def average_vector(*vectors):
-    return Vector2D(np.mean([vector.x for vector in vectors]),
-                    np.mean([vector.y for vector in vectors]))
-
-def distance_between_two_dots(x1, y1, x2, y2):
-    return np.sqrt((y2 - y1)**2 + (x2 - x1)**2)
 
 class Vector2D:
     def __init__(self, x = 0, y = 0):
@@ -16,122 +8,142 @@ class Vector2D:
         self.y = y
 
 class Boid:
-    def __init__(self, size = 5, speed = 1, steering_speed = 0.2, color = 'white'):
+    def __init__(self, size = 10, speed = 10, color = 'white'):
         self.size = size
-        self.position = Vector2D(random.randint(0, 500), random.randint(0, 500))
+        self.position = Vector2D(random.randint(0, window_width), random.randint(0, window_height))
         self.shape = canvas.create_oval(self.position.x - size / 2, self.position.y - size / 2,
                                         self.position.x + size / 2, self.position.y + size / 2, fill = color)
-        self.movement_vector = Vector2D(random.random() * 2 - 1, random.random() * 2 - 1)
-        self.direction = Vector2D()
+        self.boundry_avoidance_strength = 100
         self.speed = speed
-        self.steering_speed = steering_speed
-        self.boids_in_proximity = []
-        self.proximity_range = 20
-
-    def collision_check(self):
-        if self.position.x > window_width:
-            self.movement_vector.x = -self.movement_vector.x
-        elif self.position.x < 0:
-            self.movement_vector.x = -self.movement_vector.x
-        elif self.position.y > window_height:
-            self.movement_vector.y = -self.movement_vector.y
-        elif self.position.y < 0:
-            self.movement_vector.y = -self.movement_vector.y
+        self.velocity = Vector2D(random.random() * self.speed * 2 - self.speed,
+                                 random.random() * self.speed * 2 - self.speed)
+        self.avoidance_range = 20
+        self.awareness_range = 100
+        self.boids_in_awareness_range = 0
+        self.boids_in_avoidance_range = 0
+        self.perceived_flock_center_mass = Vector2D()
+        self.perceived_flock_velocity = Vector2D()
+        self.avoidance_vector = Vector2D()
 
     def start_moving(self):
-        self.initial_surroundings_check()
         self.tick()
-        print(self.boids_in_proximity)
 
     def tick(self):
         self.surroundings_check()
         self.calculate_direction()
-
-        self.movement_vector.x += np.clip(self.steering_speed * np.clip((self.direction.x - self.movement_vector.x), -1, 1),
-                                          -self.speed, self.speed)
-        self.movement_vector.y += np.clip(self.steering_speed * np.clip((self.direction.y - self.movement_vector.y), -1, 1),
-                                          -self.speed, self.speed)
-
-        self.collision_check()
         self.move_self_and_update_pos()
         root.after(tick_length, self.tick)
 
-    def initial_surroundings_check(self):
-        for boid in boids:
-            if (distance_between_two_dots(self.position.x, self.position.y, boid.position.x, boid.position.y) < self.proximity_range
-            and boid is not self):
-                self.boids_in_proximity.append(boid)
-
     def surroundings_check(self):
-        for boid in self.boids_in_proximity:
-            if (distance_between_two_dots(self.position.x, self.position.y,
-                                          boid.position.x, boid.position.y) > self.proximity_range and
-                boid is not self):
-                self.boids_in_proximity.pop(self.boids_in_proximity.index(boid))
-                continue
+        self.boids_in_awareness_range = 0
+        self.boids_in_avoidance_range = 0
+        self.perceived_flock_center_mass = Vector2D()
+        self.perceived_flock_velocity = Vector2D()
+        self.avoidance_vector = Vector2D()
+        for boid in boids:
+            if boid is not self:
+                if self.is_distance_small_enough(boid.position.x, boid.position.y, self.awareness_range):
+                    self.boids_in_awareness_range += 1
+                    self.perceived_flock_center_mass.x += boid.position.x
+                    self.perceived_flock_center_mass.y += boid.position.y
+                    self.perceived_flock_velocity.x += boid.velocity.x
+                    self.perceived_flock_velocity.y += boid.velocity.y
+                    if self.is_distance_small_enough(boid.position.x, boid.position.y, self.avoidance_range):
+                        self.boids_in_avoidance_range += 1
+                        self.avoidance_vector.x -= (boid.position.x - self.position.x) / ticks_per_second
+                        self.avoidance_vector.y -= (boid.position.y - self.position.y) / ticks_per_second
+        self.perceived_flock_center_mass.x = self.perceived_flock_center_mass.x / (self.boids_in_awareness_range if self.boids_in_awareness_range else 1)
+        self.perceived_flock_center_mass.y = self.perceived_flock_center_mass.y / (self.boids_in_awareness_range if self.boids_in_awareness_range else 1)
+        self.perceived_flock_velocity.x = self.perceived_flock_velocity.x / (self.boids_in_awareness_range if self.boids_in_awareness_range else 1)
+        self.perceived_flock_velocity.y = self.perceived_flock_velocity.y / (self.boids_in_awareness_range if self.boids_in_awareness_range else 1)
 
-            for bds in boid.boids_in_proximity:
-                if (distance_between_two_dots(self.position.x, self.position.y,
-                                              bds.position.x, bds.position.y) < self.proximity_range
-                        and bds not in self.boids_in_proximity and boid is not self):
-                    self.boids_in_proximity.append(bds)
 
     def calculate_direction(self):
-        vectors_away_from_boids = []
-        distances_from_boids = []
-        for boid in self.boids_in_proximity:
-            angle = math.atan2(self.position.y - boid.position.y,
-                               self.position.x - boid.position.x)
+        cohesion_vector = self.calculate_cohesion_vector()
+        separation_vector = self.calculate_avoidance_vector()
+        alignment_vector = self.calculate_alignment_vector()
+        boundry_avoidance_vector = self.calculate_boundry_avoidance_vector()
 
-            distances_from_boids.append(distance_between_two_dots(self.position.x, self.position.y,
-                                                                  boid.position.x, boid.position.y))
+        self.velocity.x += cohesion_vector.x + separation_vector.x + alignment_vector.x + boundry_avoidance_vector.x
+        self.velocity.y += cohesion_vector.y + separation_vector.y + alignment_vector.y + boundry_avoidance_vector.y
 
-            vectors_away_from_boids.append(Vector2D(np.cos(angle), np.sin(angle))),
+    def calculate_cohesion_vector(self):
+        return (Vector2D((self.perceived_flock_center_mass.x - self.position.x) / 40 / ticks_per_second * cohesion_slider.get() / 100,
+                        (self.perceived_flock_center_mass.y - self.position.y) / 40 / ticks_per_second * cohesion_slider.get() / 100)
+            if use_cohesion.get() else Vector2D())
 
-        separation_multiplier = np.mean(distances_from_boids) / self.proximity_range
+    def calculate_avoidance_vector(self):
+        return Vector2D(self.avoidance_vector.x * avoidance_slider.get() / 100, self.avoidance_vector.y * avoidance_slider.get() / 100)\
+            if use_avoidance.get() else Vector2D()
 
-        separation_vector = Vector2D(average_vector(*vectors_away_from_boids).x,
-                                     average_vector(*vectors_away_from_boids).y)
-        print(separation_vector.x, separation_vector.y, len(vectors_away_from_boids))
+    def calculate_alignment_vector(self):
+        return (Vector2D((self.perceived_flock_velocity.x - self.velocity.x) / ticks_per_second * 5 * alignment_slider.get() / 100,
+                        (self.perceived_flock_velocity.y - self.velocity.y) / ticks_per_second * 5 * alignment_slider.get() / 100)
+            if use_alignment.get() else Vector2D())
 
-        alignment_vector = average_vector(*[boid.movement_vector for boid in self.boids_in_proximity])
-
-        print(alignment_vector.x, alignment_vector.y)
-
-        proximity_boid_center_mass = average_vector(*[boid.position for boid in self.boids_in_proximity])
-
-        angle = math.atan2(proximity_boid_center_mass.y - self.position.y,
-                           proximity_boid_center_mass.x - self.position.x)
-
-        cohesion_vector = Vector2D(np.cos(angle), np.sin(angle))
-
-        print(cohesion_vector.x, cohesion_vector.y)
-
-        self.direction.x = separation_vector.x + alignment_vector.x + cohesion_vector.x
-        self.direction.y = separation_vector.y + alignment_vector.y + cohesion_vector.y
-        print(self.direction.x, self.direction.y)
-        print(separation_multiplier)
-        print()
+    def calculate_boundry_avoidance_vector(self):
+        vector = Vector2D()
+        if self.position.x >= window_width - 50:
+            vector.x = -self.boundry_avoidance_strength / ticks_per_second
+        elif self.position.x <= 50:
+            vector.x = self.boundry_avoidance_strength / ticks_per_second
+        elif self.position.y >= window_height - 50:
+            vector.y = -self.boundry_avoidance_strength / ticks_per_second
+        elif self.position.y <= 50:
+            vector.y = self.boundry_avoidance_strength / ticks_per_second
+        return vector
 
     def move_self_and_update_pos(self):
-        canvas.move(self.shape, self.movement_vector.x, self.movement_vector.y)
-        self.position.x += self.movement_vector.x
-        self.position.y += self.movement_vector.y
+        self.velocity.x = np.clip(self.velocity.x, -self.speed, self.speed)
+        self.velocity.y = np.clip(self.velocity.y, -self.speed, self.speed)
 
-ticks_per_second = 20
+        canvas.move(self.shape, self.velocity.x, self.velocity.y)
+
+        self.position.x += self.velocity.x
+        self.position.y += self.velocity.y
+
+    def is_distance_small_enough(self, x, y, distance):
+        return abs(x - self.position.x) < distance and abs(y - self.position.y) < distance
+
+ticks_per_second = 30
 tick_length = 1000 // ticks_per_second
 
-window_width = 500
-window_height = 500
+window_width = 800
 
+window_height = 600
 root = tk.Tk()
 
 canvas = tk.Canvas(root, width = window_width, height = window_height, background = 'black')
-canvas.pack()
+canvas.grid(row = 1, column = 2, rowspan = 50)
 
-number_of_boids = 100
+use_cohesion = tk.BooleanVar(value = True)
+use_cohesion_chkbx = tk.Checkbutton(root, text = 'Сплоченность', variable = use_cohesion)
+use_cohesion_chkbx.grid(row = 1, column = 1)
+
+cohesion_slider = tk.Scale(root, from_ = 0, to = 100, orient = 'horizontal', length = 100)
+cohesion_slider.grid(row = 2, column = 1)
+cohesion_slider.set(100)
+
+use_avoidance = tk.BooleanVar(value = True)
+use_avoidance_chkbx = tk.Checkbutton(root, text = 'Избежание\n соседей', variable = use_avoidance)
+use_avoidance_chkbx.grid(row = 3, column = 1)
+
+avoidance_slider = tk.Scale(root, from_ = 0, to = 100, orient = 'horizontal', length = 100)
+avoidance_slider.grid(row = 4, column = 1)
+avoidance_slider.set(100)
+
+use_alignment = tk.BooleanVar(value = True)
+use_alignment_chkbx = tk.Checkbutton(root, text = 'Выравнивание\n направления\n и скорости', variable = use_alignment)
+use_alignment_chkbx.grid(row = 5, column = 1)
+
+alignment_slider = tk.Scale(root, from_ = 0, to = 100, orient = 'horizontal', length = 100)
+alignment_slider.grid(row = 6, column = 1)
+alignment_slider.set(100)
+
+number_of_boids = 150
 
 boids = [Boid() for i in range(number_of_boids)]
+
 for boid in boids:
     boid.start_moving()
 

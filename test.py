@@ -1,9 +1,11 @@
 import math
 import numpy as np
+import random
 
-a = (5, 5)
-b = (2, 2)
+a = [123, 34, 2134, 54, 432,65, 23, 123]
 
-angle = math.atan2(a[0] - b[0], a[1] - b[1])
-print(np.cos(angle), np.sin(angle))
+b = 0
+
+
+print(np.mean(a))
 
